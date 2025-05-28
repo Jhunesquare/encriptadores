@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/css/bootstrap.min.css" rel="stylesheet"
+    integrity="sha384-4Q6Gf2aSP4eDXB8Miphtr37CMZZQ5oXLH2yaXMJ2w8e2ZtHTl7GptT4jmndRuHDT" crossorigin="anonymous">
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-j1CDi7MgGQ12Z7Qab0qlWQ/Qqz24Gc6BM0thvEMVjHnfYGF0rmFCozFSxQBxwHKO"
+    crossorigin="anonymous"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <meta charset="UTF-8" />
+  <title>Métodos de encriptación</title>
+</head>
+
+<body class="bg-light">
+  <div class="container mt-5">
+    <h1 class="text-center mb-4">🔐 Encriptador de Texto</h1>
+    <div id="alertContainer" class="alert alert-danger d-none" role="alert"></div>
+
+    <div class="card shadow">
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="method" class="form-label">Método de encriptación:</label>
+          <select class="form-select" id="method">
+            <option selected value="">Seleccione...</option>
+            <option value="cesar">César (Desplazamiento)</option>
+            <option value="ecc">ECC (Elliptic Curve Cryptography)</option>
+            <option value="enigma">Enigma Simplificado</option>
+            <option value="xor">XOR (Clave)</option>
+          </select>
+        </div>
+
+        <div class="mb-3" id="desplazamientoDiv">
+          <label for="inputNumber" class="form-label">Desplazamiento (solo César):</label>
+          <input class="form-control" type="number" id="inputNumber" placeholder="1-27" />
+        </div>
+
+        <div class="mb-3" id="xorKeyDiv" style="display:none;">
+          <label for="xorKey" class="form-label">Clave XOR (texto):</label>
+          <input class="form-control" type="text" id="xorKey" placeholder="Introduce clave para XOR" />
+        </div>
+
+        <div class="mb-3" id="enigmaKeyDiv" style="display:none;">
+          <label for="enigmaKey" class="form-label">Clave Enigma (3 letras, ej: ABC):</label>
+          <input class="form-control" type="text" id="enigmaKey" maxlength="3" placeholder="Ej: ABC" />
+        </div>
+
+        <div class="mb-3">
+          <label for="inputText" class="form-label">Texto:</label>
+          <textarea class="form-control" id="inputText" rows="4"></textarea>
+        </div>
+
+        <div class="d-grid gap-2 d-md-flex justify-content-md-end mb-3">
+          <button class="btn btn-primary me-md-2" onclick="encrypt()">Encriptar</button>
+          <button class="btn btn-danger" onclick="decrypt()">Desencriptar</button>
+        </div>
+
+        <div>
+          <label class="form-label">Resultado:</label>
+          <textarea class="form-control" id="outputText" rows="4" readonly></textarea>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+
+    const socket = io();
+
+    // Al recibir un mensaje desde el servidor, mostrarlo
+    socket.on('mensaje_recibido', (mensaje) => {
+      document.getElementById('inputText').value = mensaje;
+    });
+
+    function showAlert(message) {
+      const alertDiv = document.getElementById("alertContainer");
+      alertDiv.innerText = message;
+      alertDiv.classList.remove("d-none");
+
+      setTimeout(() => {
+        alertDiv.classList.add("d-none");
+      }, 3000);
+    }
+
+    // Mostrar inputs según método
+    const methodSelect = document.getElementById("method");
+    const desplazamientoDiv = document.getElementById("desplazamientoDiv");
+    const xorKeyDiv = document.getElementById("xorKeyDiv");
+    const enigmaKeyDiv = document.getElementById("enigmaKeyDiv");
+
+    // Mostrar u ocultar el campo de desplazamiento
+    document.getElementById("method").addEventListener("change", function () {
+      const method = this.value;
+      const desplazamientoDiv = document.getElementById("desplazamientoDiv");
+
+      if (method === "cesar") {
+        desplazamientoDiv.style.display = "block";
+      } else {
+        desplazamientoDiv.style.display = "none";
+      }
+    });
+
+    // Mostrar u ocultar al cargar la página según valor por defecto
+    window.addEventListener("DOMContentLoaded", () => {
+      const method = document.getElementById("method").value;
+      document.getElementById("desplazamientoDiv").style.display = method === "cesar" ? "block" : "none";
+    });
+
+    methodSelect.addEventListener("change", () => {
+      const method = methodSelect.value;
+      desplazamientoDiv.style.display = method === "cesar" ? "block" : "none";
+      xorKeyDiv.style.display = method === "xor" ? "block" : "none";
+      enigmaKeyDiv.style.display = method === "enigma" ? "block" : "none";
+      document.getElementById("inputNumber").value = "";
+      document.getElementById("xorKey").value = "";
+      document.getElementById("enigmaKey").value = "";
+      document.getElementById("outputText").value = "";
+    });
+
+    // ECC keys global
+    let eccKeyPair = null;
+
+    async function generateECCKeyPair() {
+      eccKeyPair = await crypto.subtle.generateKey(
+        { name: "ECDH", namedCurve: "P-256" },
+        true,
+        ["deriveKey"]
+      );
+    }
+
+    async function encryptECC(plaintext) {
+      if (!eccKeyPair) await generateECCKeyPair();
+
+      const derivedKey = await crypto.subtle.deriveKey(
+        { name: "ECDH", public: eccKeyPair.publicKey },
+        eccKeyPair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["encrypt"]
+      );
+
+      const enc = new TextEncoder();
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encrypted = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        derivedKey,
+        enc.encode(plaintext)
+      );
+
+      const buffer = new Uint8Array(encrypted);
+      const combined = new Uint8Array(iv.length + buffer.length);
+      combined.set(iv);
+      combined.set(buffer, iv.length);
+
+      return btoa(String.fromCharCode(...combined));
+    }
+
+    async function decryptECC(ciphertextB64) {
+      if (!eccKeyPair) throw new Error("No hay clave ECC generada.");
+
+      const combined = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
+      const iv = combined.slice(0, 12);
+      const data = combined.slice(12);
+
+      const derivedKey = await crypto.subtle.deriveKey(
+        { name: "ECDH", public: eccKeyPair.publicKey },
+        eccKeyPair.privateKey,
+        { name: "AES-GCM", length: 256 },
+        false,
+        ["decrypt"]
+      );
+
+      try {
+        const decrypted = await crypto.subtle.decrypt(
+          { name: "AES-GCM", iv: iv },
+          derivedKey,
+          data
+        );
+        return new TextDecoder().decode(decrypted);
+      } catch {
+        throw new Error("Desencriptación ECC falló.");
+      }
+    }
+
+    // XOR
+    function xorCipher(text, key) {
+      if (!key) return null;
+      let result = "";
+      for (let i = 0; i < text.length; i++) {
+        result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
+      }
+      return result;
+    }
+
+    // CÉSAR
+    function caesarCipher(text, shift, encrypt = true) {
+      const s = encrypt ? shift : (26 - shift) % 26;
+      return [...text].map(char => {
+        if (/[a-zA-Z]/.test(char)) {
+          const base = char === char.toUpperCase() ? 65 : 97;
+          return String.fromCharCode((char.charCodeAt(0) - base + s) % 26 + base);
+        }
+        return char;
+      }).join("");
+    }
+
+    // ENIGMA Simplificado
+    // Rotor wiring example (simple substitution)
+    const rotorI = "EKMFLGDQVZNTOWYHXUSPAIBRCJ";
+    const rotorII = "AJDKSIRUXBLHWTMCQGZNPYFVOE";
+    const rotorIII = "BDFHJLCPRTXVZNYEIWGAKMUSQO";
+    const reflectorB = "YRUHQSLDPXNGOKMIEBFZCWVJAT";
+
+    // Convierte letra a índice (0-25)
+    function charToIndex(c) {
+      return c.charCodeAt(0) - 65;
+    }
+    // Convierte índice a letra mayúscula
+    function indexToChar(i) {
+      return String.fromCharCode((i + 26) % 26 + 65);
+    }
+
+    function enigmaEncrypt(text, key) {
+      if (key.length !== 3 || !/^[A-Z]+$/.test(key.toUpperCase())) {
+        showAlert("La clave Enigma debe ser 3 letras A-Z mayúsculas.");
+        return null;
+      }
+
+      text = text.toUpperCase();
+      key = key.toUpperCase();
+
+      // Posición inicial de los rotores según clave
+      let pos = [charToIndex(key[0]), charToIndex(key[1]), charToIndex(key[2])];
+
+      let result = "";
+
+      for (let i = 0; i < text.length; i++) {
+        let c = text[i];
+        if (c < 'A' || c > 'Z') {
+          result += c;
+          continue;
+        }
+
+        // Paso por rotores hacia adelante
+        let step = (charToIndex(c) + pos[0]) % 26;
+        step = charToIndex(rotorI[step]);
+        step = (step - pos[0] + 26) % 26;
+
+        step = (step + pos[1]) % 26;
+        step = charToIndex(rotorII[step]);
+        step = (step - pos[1] + 26) % 26;
+
+        step = (step + pos[2]) % 26;
+        step = charToIndex(rotorIII[step]);
+        step = (step - pos[2] + 26) % 26;
+
+        // Reflector
+        step = charToIndex(reflectorB[step]);
+
+        // Paso por rotores hacia atrás (inverso)
+        step = (step + pos[2]) % 26;
+        step = rotorIII.indexOf(indexToChar(step));
+        step = (step - pos[2] + 26) % 26;
+
+        step = (step + pos[1]) % 26;
+        step = rotorII.indexOf(indexToChar(step));
+        step = (step - pos[1] + 26) % 26;
+
+        step = (step + pos[0]) % 26;
+        step = rotorI.indexOf(indexToChar(step));
+        step = (step - pos[0] + 26) % 26;
+
+        result += indexToChar(step);
+
+        // Avance rotores (similar a un odómetro)
+        pos[0] = (pos[0] + 1) % 26;
+        if (pos[0] === 0) {
+          pos[1] = (pos[1] + 1) % 26;
+          if (pos[1] === 0) {
+            pos[2] = (pos[2] + 1) % 26;
+          }
+        }
+      }
+      return result;
+    }
+
+    // ENIGMA para desencriptar es el mismo proceso (simétrico)
+    function enigmaDecrypt(text, key) {
+      return enigmaEncrypt(text, key); // mismo algoritmo
+    }
+
+    // FUNCIONES PRINCIPALES
+    async function encrypt() {
+      const method = methodSelect.value;
+      const text = document.getElementById("inputText").value.trim();
+      const desplazamiento = parseInt(document.getElementById("inputNumber").value);
+      const xorKey = document.getElementById("xorKey").value;
+      const enigmaKey = document.getElementById("enigmaKey").value.toUpperCase();
+
+      if (method == "") {
+        showAlert("Por favor, seleccione un método.");
+        return;
+      }
+
+      if (!text) {
+        showAlert("Por favor, ingresa un texto para encriptar.");
+        return;
+      }
+
+      let result = "";
+
+      try {
+        if (method === "cesar") {
+          if (isNaN(desplazamiento) || desplazamiento < 1 || desplazamiento > 27) {
+            showAlert("Desplazamiento válido entre 1 y 27 para César.");
+            return;
+          }
+          result = caesarCipher(text, desplazamiento, true);
+        } else if (method === "xor") {
+          if (!xorKey) {
+            showAlert("Ingresa una clave para XOR.");
+            return;
+          }
+          result = btoa(xorCipher(text, xorKey));
+        } else if (method === "enigma") {
+          if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
+            showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
+            return;
+          }
+          result = enigmaEncrypt(text, enigmaKey);
+          if (result === null) return;
+        } else if (method === "ecc") {
+          result = await encryptECC(text);
+        }
+      } catch (error) {
+        showAlert("Error al encriptar: " + error.message);
+        return;
+      }
+
+      document.getElementById("outputText").value = result;
+      socket.emit('mensaje_encriptado', result);
+    }
+
+    async function decrypt() {
+      const method = methodSelect.value;
+      const text = document.getElementById("inputText").value.trim();
+      const desplazamiento = parseInt(document.getElementById("inputNumber").value);
+      const xorKey = document.getElementById("xorKey").value;
+      const enigmaKey = document.getElementById("enigmaKey").value.toUpperCase();
+
+      if (method == "") {
+        showAlert("Por favor, seleccione un método.");
+        return;
+      }
+
+      if (!text) {
+        showAlert("Por favor, ingresa un texto para desencriptar.");
+        return;
+      }
+      let result = "";
+
+      try {
+        if (method === "cesar") {
+          if (isNaN(desplazamiento) || desplazamiento < 1 || desplazamiento > 27) {
+            showAlert("Desplazamiento válido entre 1 y 27 para César.");
+            return;
+          }
+          result = caesarCipher(text, desplazamiento, false);
+        } else if (method === "xor") {
+          if (!xorKey) {
+            showAlert("Ingresa una clave para XOR.");
+            return;
+          }
+          // El texto está base64, decodificamos y aplicamos XOR
+          const decoded = atob(text);
+          result = xorCipher(decoded, xorKey);
+        } else if (method === "enigma") {
+          if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
+            showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
+            return;
+          }
+          result = enigmaDecrypt(text, enigmaKey);
+          if (result === null) return;
+        } else if (method === "ecc") {
+          result = await decryptECC(text);
+        }
+      } catch (error) {
+        showAlert("Error al desencriptar: " + error.message);
+        return;
+      }
+
+      document.getElementById("outputText").value = result;
+    }
+  </script>
+
+</body>
+
+</html>
