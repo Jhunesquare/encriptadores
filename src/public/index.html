@@ -347,7 +347,7 @@
           }
           result = caesarCipher(text, desplazamiento, true);
         } else if (method === "rsa") {
-          result = await encryptRSA(text);
+          result = JSON.stringify(await encryptRSA(text));
         } else if (method === "enigma") {
           if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
             showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
