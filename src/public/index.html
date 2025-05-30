@@ -7,7 +7,10 @@
   <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.6/dist/js/bootstrap.bundle.min.js"
     integrity="sha384-j1CDi7MgGQ12Z7Qab0qlWQ/Qqz24Gc6BM0thvEMVjHnfYGF0rmFCozFSxQBxwHKO"
     crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/elliptic/6.5.4/elliptic.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
   <meta charset="UTF-8" />
   <title>Métodos de encriptación</title>
 </head>
@@ -24,20 +27,15 @@
           <select class="form-select" id="method">
             <option selected value="">Seleccione...</option>
             <option value="cesar">César (Desplazamiento)</option>
-            <option value="ecc">ECC (Elliptic Curve Cryptography)</option>
-            <option value="enigma">Enigma Simplificado</option>
-            <option value="xor">XOR (Clave)</option>
+            <option value="ecies">ECIES (Elliptic Curve Integrated Encryption Scheme)</option>
+            <option value="enigma">Enigma</option>
+            <option value="rsa">RSA (Rivest-Shamir-Adleman)</option>
           </select>
         </div>
 
         <div class="mb-3" id="desplazamientoDiv">
           <label for="inputNumber" class="form-label">Desplazamiento (solo César):</label>
           <input class="form-control" type="number" id="inputNumber" placeholder="1-27" />
-        </div>
-
-        <div class="mb-3" id="xorKeyDiv" style="display:none;">
-          <label for="xorKey" class="form-label">Clave XOR (texto):</label>
-          <input class="form-control" type="text" id="xorKey" placeholder="Introduce clave para XOR" />
         </div>
 
         <div class="mb-3" id="enigmaKeyDiv" style="display:none;">
@@ -66,11 +64,122 @@
   <script>
 
     const socket = io();
+    const ec = elliptic.ec('secp256k1');
+    let eciesEncrypted = '';
+    let eciesDencrypted = '';
 
     // Al recibir un mensaje desde el servidor, mostrarlo
     socket.on('mensaje_recibido', (mensaje) => {
       document.getElementById('inputText').value = mensaje;
     });
+
+    // RSA keypair global
+    let rsaKeyPair = null;
+
+    async function generateRSAKeyPair() {
+      rsaKeyPair = await window.crypto.subtle.generateKey(
+        {
+          name: "RSA-OAEP",
+          modulusLength: 2048,
+          publicExponent: new Uint8Array([1, 0, 1]),
+          hash: "SHA-256",
+        },
+        true,
+        ["encrypt", "decrypt"]
+      );
+    }
+
+    async function encryptRSA(plaintext) {
+      if (!rsaKeyPair) await generateRSAKeyPair();
+
+      const encoded = new TextEncoder().encode(plaintext);
+      const encrypted = await window.crypto.subtle.encrypt(
+        { name: "RSA-OAEP" },
+        rsaKeyPair.publicKey,
+        encoded
+      );
+      return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+    }
+
+    async function decryptRSA(ciphertextB64) {
+      if (!rsaKeyPair) throw new Error("No hay claves RSA generadas");
+
+      const data = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
+      const decrypted = await window.crypto.subtle.decrypt(
+        { name: "RSA-OAEP" },
+        rsaKeyPair.privateKey,
+        data
+      );
+      return new TextDecoder().decode(decrypted);
+    }
+
+    // Clave pública del receptor (puede ser generada fuera y compartida)
+    const keyPair = ec.genKeyPair();
+    const publicKey = keyPair.getPublic('hex');
+    const privateKey = keyPair.getPrivate('hex');
+
+    // 1. Generar clave efímera
+    const ephemeralKey = ec.genKeyPair();
+    const ephemeralPublicKey = ephemeralKey.getPublic('hex');
+
+    // 2. Derivar clave compartida
+    const publicKeyHex = ec.keyFromPublic(publicKey, 'hex');
+    const sharedSecret = ephemeralKey.derive(publicKeyHex.getPublic());
+
+    // Convertir sharedSecret a formato compatible
+    const sharedSecretStr = sharedSecret.toString(16).padStart(64, '0');
+    const sharedSecretWordArray = CryptoJS.enc.Hex.parse(sharedSecretStr);
+
+    // 3. Derivar claves
+    const hash = CryptoJS.SHA256(sharedSecretWordArray);
+    const encryptionKey = hash.toString(CryptoJS.enc.Hex).substring(0, 32);
+    const macKey = hash.toString(CryptoJS.enc.Hex).substring(32);
+
+    // Método para encriptar un mensaje con ECIES
+    function eciesEncrypt(plaintext) {
+
+      // 4. Generar IV usando CryptoJS (reemplazo para randomBytes)
+      const iv = CryptoJS.lib.WordArray.random(16); // IV de 16 bytes aleatorio
+
+      // 5. Encriptar con AES
+      const encrypted = CryptoJS.AES.encrypt(
+        CryptoJS.enc.Utf8.parse(plaintext),
+        CryptoJS.enc.Hex.parse(encryptionKey),
+        {
+          iv: iv,
+          mode: CryptoJS.mode.CBC,
+          padding: CryptoJS.pad.Pkcs7
+        }
+      );
+
+      // 6. Calcular MAC
+      const macData = ephemeralPublicKey + iv.toString() + encrypted.toString();
+      const mac = CryptoJS.HmacSHA256(macData, CryptoJS.enc.Hex.parse(macKey)).toString();
+
+      return {
+        ephemeralPublicKey: ephemeralPublicKey,
+        iv: iv.toString(),
+        ciphertext: encrypted.toString(),
+        mac: mac.toString(),
+        encrypterKey: encryptionKey.toString()
+      };
+    }
+
+    function eciesDecrypt(ciphertext, iv, encrypterKey) {
+
+      // Descifrar con AES usando CryptoJS
+      const decrypted = CryptoJS.AES.decrypt(
+        ciphertext,
+        CryptoJS.enc.Hex.parse(encrypterKey),
+        {
+          iv: CryptoJS.enc.Hex.parse(iv),
+          mode: CryptoJS.mode.CBC,
+          padding: CryptoJS.pad.Pkcs7
+        }
+      );
+
+      return CryptoJS.enc.Utf8.stringify(decrypted);
+    }
 
     function showAlert(message) {
       const alertDiv = document.getElementById("alertContainer");
@@ -85,7 +194,6 @@
     // Mostrar inputs según método
     const methodSelect = document.getElementById("method");
     const desplazamientoDiv = document.getElementById("desplazamientoDiv");
-    const xorKeyDiv = document.getElementById("xorKeyDiv");
     const enigmaKeyDiv = document.getElementById("enigmaKeyDiv");
 
     // Mostrar u ocultar el campo de desplazamiento
@@ -109,88 +217,12 @@
     methodSelect.addEventListener("change", () => {
       const method = methodSelect.value;
       desplazamientoDiv.style.display = method === "cesar" ? "block" : "none";
-      xorKeyDiv.style.display = method === "xor" ? "block" : "none";
       enigmaKeyDiv.style.display = method === "enigma" ? "block" : "none";
       document.getElementById("inputNumber").value = "";
-      document.getElementById("xorKey").value = "";
       document.getElementById("enigmaKey").value = "";
       document.getElementById("outputText").value = "";
     });
 
-    // ECC keys global
-    let eccKeyPair = null;
-
-    async function generateECCKeyPair() {
-      eccKeyPair = await crypto.subtle.generateKey(
-        { name: "ECDH", namedCurve: "P-256" },
-        true,
-        ["deriveKey"]
-      );
-    }
-
-    async function encryptECC(plaintext) {
-      if (!eccKeyPair) await generateECCKeyPair();
-
-      const derivedKey = await crypto.subtle.deriveKey(
-        { name: "ECDH", public: eccKeyPair.publicKey },
-        eccKeyPair.privateKey,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["encrypt"]
-      );
-
-      const enc = new TextEncoder();
-      const iv = crypto.getRandomValues(new Uint8Array(12));
-      const encrypted = await crypto.subtle.encrypt(
-        { name: "AES-GCM", iv: iv },
-        derivedKey,
-        enc.encode(plaintext)
-      );
-
-      const buffer = new Uint8Array(encrypted);
-      const combined = new Uint8Array(iv.length + buffer.length);
-      combined.set(iv);
-      combined.set(buffer, iv.length);
-
-      return btoa(String.fromCharCode(...combined));
-    }
-
-    async function decryptECC(ciphertextB64) {
-      if (!eccKeyPair) throw new Error("No hay clave ECC generada.");
-
-      const combined = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
-      const iv = combined.slice(0, 12);
-      const data = combined.slice(12);
-
-      const derivedKey = await crypto.subtle.deriveKey(
-        { name: "ECDH", public: eccKeyPair.publicKey },
-        eccKeyPair.privateKey,
-        { name: "AES-GCM", length: 256 },
-        false,
-        ["decrypt"]
-      );
-
-      try {
-        const decrypted = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv: iv },
-          derivedKey,
-          data
-        );
-        return new TextDecoder().decode(decrypted);
-      } catch {
-        throw new Error("Desencriptación ECC falló.");
-      }
-    }
-
-    // XOR
-    function xorCipher(text, key) {
-      if (!key) return null;
-      let result = "";
-      for (let i = 0; i < text.length; i++) {
-        result += String.fromCharCode(text.charCodeAt(i) ^ key.charCodeAt(i % key.length));
-      }
-      return result;
-    }
 
     // CÉSAR
     function caesarCipher(text, shift, encrypt = true) {
@@ -294,7 +326,6 @@
       const method = methodSelect.value;
       const text = document.getElementById("inputText").value.trim();
       const desplazamiento = parseInt(document.getElementById("inputNumber").value);
-      const xorKey = document.getElementById("xorKey").value;
       const enigmaKey = document.getElementById("enigmaKey").value.toUpperCase();
 
       if (method == "") {
@@ -316,12 +347,8 @@
             return;
           }
           result = caesarCipher(text, desplazamiento, true);
-        } else if (method === "xor") {
-          if (!xorKey) {
-            showAlert("Ingresa una clave para XOR.");
-            return;
-          }
-          result = btoa(xorCipher(text, xorKey));
+        } else if (method === "rsa") {
+          result = await encryptRSA(text);
         } else if (method === "enigma") {
           if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
             showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
@@ -329,8 +356,10 @@
           }
           result = enigmaEncrypt(text, enigmaKey);
           if (result === null) return;
-        } else if (method === "ecc") {
-          result = await encryptECC(text);
+        } else if (method === "ecies") {
+          const encrypted = eciesEncrypt(text);
+          result = JSON.stringify(encrypted); // Convertir a JSON string
+          eciesEncrypted = encrypted; // Guardar el objeto por si acaso
         }
       } catch (error) {
         showAlert("Error al encriptar: " + error.message);
@@ -345,9 +374,7 @@
       const method = methodSelect.value;
       const text = document.getElementById("inputText").value.trim();
       const desplazamiento = parseInt(document.getElementById("inputNumber").value);
-      const xorKey = document.getElementById("xorKey").value;
       const enigmaKey = document.getElementById("enigmaKey").value.toUpperCase();
-
       if (method == "") {
         showAlert("Por favor, seleccione un método.");
         return;
@@ -366,14 +393,8 @@
             return;
           }
           result = caesarCipher(text, desplazamiento, false);
-        } else if (method === "xor") {
-          if (!xorKey) {
-            showAlert("Ingresa una clave para XOR.");
-            return;
-          }
-          // El texto está base64, decodificamos y aplicamos XOR
-          const decoded = atob(text);
-          result = xorCipher(decoded, xorKey);
+        } else if (method === "rsa") {
+          result = await decryptRSA(text);
         } else if (method === "enigma") {
           if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
             showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
@@ -381,8 +402,10 @@
           }
           result = enigmaDecrypt(text, enigmaKey);
           if (result === null) return;
-        } else if (method === "ecc") {
-          result = await decryptECC(text);
+        } else if (method === "ecies") {
+          console.log(JSON.parse(text));
+          result = eciesDecrypt(JSON.parse(text).ciphertext, JSON.parse(text).iv, JSON.parse(text).encrypterKey);
+          console.log("resultado: " + result);
         }
       } catch (error) {
         showAlert("Error al desencriptar: " + error.message);
