@@ -74,10 +74,9 @@
     });
 
     // RSA keypair global
-    let rsaKeyPair = "";
 
     async function encryptRSA(plaintext) {
-      rsaKeyPair = await window.crypto.subtle.generateKey(
+      let rsaKeyPair = await window.crypto.subtle.generateKey(
         {
           name: "RSA-OAEP",
           modulusLength: 2048,
@@ -87,28 +86,48 @@
         true,
         ["encrypt", "decrypt"]
       );
-
+      console.log(rsaKeyPair)
       const encoded = new TextEncoder().encode(plaintext);
       const encrypted = await window.crypto.subtle.encrypt(
         { name: "RSA-OAEP" },
         rsaKeyPair.publicKey,
         encoded
       );
+      // Exportar clave pública
+      const exportedPrivateKey = await window.crypto.subtle.exportKey("pkcs8", rsaKeyPair.privateKey);
+      const privateKeyB64 = btoa(String.fromCharCode(...new Uint8Array(exportedPrivateKey)));
       return {
         encryptedText: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
-        key: rsaKeyPair.privateKey
+        key: privateKeyB64
       };
     }
 
     async function decryptRSA(ciphertextB64, key) {
       if (!key) throw new Error("No hay claves RSA generadas");
+      // 1. Convertir de Base64 a ArrayBuffer
+      const keyBuffer = Uint8Array.from(atob(key), c => c.charCodeAt(0)).buffer;
 
+      // 2. Importar clave privada
+      const privateKey = await window.crypto.subtle.importKey(
+        "pkcs8",
+        keyBuffer,
+        {
+          name: "RSA-OAEP",
+          hash: "SHA-256"
+        },
+        true,
+        ["decrypt"]
+      );
+
+      // 3. Desencriptar el texto
       const data = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
+
       const decrypted = await window.crypto.subtle.decrypt(
         { name: "RSA-OAEP" },
-        key,
+        privateKey,
         data
       );
+
       return new TextDecoder().decode(decrypted);
     }
 
