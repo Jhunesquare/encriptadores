@@ -94,16 +94,19 @@
         rsaKeyPair.publicKey,
         encoded
       );
-      return btoa(String.fromCharCode(...new Uint8Array(encrypted)));
+      return {
+        encryptedText: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
+        key: rsaKeyPair
+      };
     }
 
-    async function decryptRSA(ciphertextB64) {
-      if (!rsaKeyPair) throw new Error("No hay claves RSA generadas");
+    async function decryptRSA(ciphertextB64, key) {
+      if (!key) throw new Error("No hay claves RSA generadas");
 
       const data = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
       const decrypted = await window.crypto.subtle.decrypt(
         { name: "RSA-OAEP" },
-        rsaKeyPair.privateKey,
+        key.privateKey,
         data
       );
       return new TextDecoder().decode(decrypted);
@@ -390,7 +393,7 @@
           }
           result = caesarCipher(text, desplazamiento, false);
         } else if (method === "rsa") {
-          result = await decryptRSA(text);
+          result = await decryptRSA(JSON.parse(text).encryptedText, JSON.parse(text).key);
         } else if (method === "enigma") {
           if (enigmaKey.length !== 3 || !/^[A-Z]{3}$/.test(enigmaKey)) {
             showAlert("Clave Enigma debe ser 3 letras A-Z mayúsculas.");
