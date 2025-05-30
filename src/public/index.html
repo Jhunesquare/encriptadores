@@ -96,7 +96,7 @@
       );
       return {
         encryptedText: btoa(String.fromCharCode(...new Uint8Array(encrypted))),
-        key: rsaKeyPair
+        key: rsaKeyPair.privateKey
       };
     }
 
@@ -106,7 +106,7 @@
       const data = Uint8Array.from(atob(ciphertextB64), c => c.charCodeAt(0));
       const decrypted = await window.crypto.subtle.decrypt(
         { name: "RSA-OAEP" },
-        key.privateKey,
+        key,
         data
       );
       return new TextDecoder().decode(decrypted);
