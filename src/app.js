@@ -1,29 +1,38 @@
-const express= require('express')
-const http = require('http')
-const socketIo = require('socket.io');
-const { randomBytes } = require('crypto');
-
-const { Server } = require('socket.io');
+const express = require('express');
+const fs = require('fs');
+const https = require('https');
 const path = require('path');
+const { Server } = require('socket.io');
 
-const app = express()
-const server = http.createServer(app)
-const io = require('socket.io')(server, {
+const app = express();
+
+// Certificados SSL
+const options = {
+  key: fs.readFileSync('server.key'),
+  cert: fs.readFileSync('server.cert')
+};
+
+// Crear servidor HTTPS
+const httpsServer = https.createServer(options, app);
+
+// Inicializar socket.io con el servidor HTTPS
+const io = new Server(httpsServer, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   }
 });
-const PORT = 3000
 
-// Configuración de Socket.io
+// Puerto
+const PORT = 3000;
+
+// Socket.IO
 io.on('connection', (socket) => {
   console.log('Nuevo cliente conectado:', socket.id);
 
-  // Escucha mensajes encriptados y los retransmite
   socket.on('mensaje_encriptado', (mensaje) => {
     console.log('Mensaje recibido:', mensaje);
-    io.emit('mensaje_recibido', mensaje); // Envía a todos los clientes
+    io.emit('mensaje_recibido', mensaje);
   });
 
   socket.on('disconnect', () => {
@@ -31,14 +40,16 @@ io.on('connection', (socket) => {
   });
 });
 
-// Configuración para servir socket.io.js
+// Servir archivos estáticos
 app.use('/socket.io', express.static(path.join(__dirname, 'node_modules/socket.io/client-dist')));
+app.use(express.static(path.join(__dirname, 'public')));
 
-// Ruta principal
+// Página principal
 app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/index.html'));
 });
 
-server.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`)
-})
+// Iniciar el servidor
+httpsServer.listen(PORT, () => {
+  console.log(`Servidor HTTPS en puerto ${PORT}`);
+});
