@@ -74,7 +74,7 @@
     });
 
     // RSA keypair global
-    const rsaKeyPair = window.crypto.subtle.generateKey(
+    let rsaKeyPair = window.crypto.subtle.generateKey(
       {
         name: "RSA-OAEP",
         modulusLength: 2048,
