@@ -74,23 +74,18 @@
     });
 
     // RSA keypair global
-    let rsaKeyPair = null;
-
-    async function generateRSAKeyPair() {
-      rsaKeyPair = await window.crypto.subtle.generateKey(
-        {
-          name: "RSA-OAEP",
-          modulusLength: 2048,
-          publicExponent: new Uint8Array([1, 0, 1]),
-          hash: "SHA-256",
-        },
-        true,
-        ["encrypt", "decrypt"]
-      );
-    }
+    const rsaKeyPair = await window.crypto.subtle.generateKey(
+      {
+        name: "RSA-OAEP",
+        modulusLength: 2048,
+        publicExponent: new Uint8Array([1, 0, 1]),
+        hash: "SHA-256",
+      },
+      true,
+      ["encrypt", "decrypt"]
+    );;
 
     async function encryptRSA(plaintext) {
-      if (!rsaKeyPair) await generateRSAKeyPair();
 
       const encoded = new TextEncoder().encode(plaintext);
       const encrypted = await window.crypto.subtle.encrypt(
